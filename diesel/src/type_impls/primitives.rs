@@ -93,6 +93,16 @@ mod foreign_impls {
     #[cfg_attr(feature = "sqlite", diesel(sql_type = crate::sql_types::Timestamp))]
     struct StringProxy(String);
 
+    #[derive(AsExpression, FromSqlRow)]
+    #[diesel(foreign_derive)]
+    #[diesel(sql_type = Binary)]
+    struct OsStringProxy(OsString);
+
+    #[derive(AsExpression, FromSqlRow)]
+    #[diesel(foreign_derive)]
+    #[diesel(sql_type = Binary)]
+    struct PathBufProxy(PathBuf);
+
     #[derive(AsExpression)]
     #[diesel(foreign_derive, not_sized)]
     #[diesel(sql_type = Text)]
@@ -251,5 +261,127 @@ where
 
     fn as_expression(self) -> Self::Expression {
         Bound::new(&**self)
+    }
+}
+
+use std::ffi::{OsStr, OsString};
+use std::path::PathBuf;
+
+#[cfg(unix)]
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+#[cfg(unix)]
+impl<DB> ToSql<sql_types::Binary, DB> for OsStr
+where
+    for<'a> DB: Backend<BindCollector<'a> = RawBytesBindCollector<DB>>,
+{
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, DB>) -> serialize::Result {
+        out.write_all(self.as_bytes())
+            .map(|_| IsNull::No)
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
+    }
+}
+
+#[cfg(unix)]
+impl<DB> ToSql<sql_types::Binary, DB> for OsString
+where
+    DB: Backend,
+    OsStr: ToSql<sql_types::Binary, DB>,
+{
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, DB>) -> serialize::Result {
+        self.as_os_str().to_sql(out)
+    }
+}
+
+#[cfg(unix)]
+impl<DB> ToSql<sql_types::Binary, DB> for PathBuf
+where
+    DB: Backend,
+    OsStr: ToSql<sql_types::Binary, DB>,
+{
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, DB>) -> serialize::Result {
+        self.as_os_str().to_sql(out)
+    }
+}
+
+#[cfg(unix)]
+impl<DB> FromSql<sql_types::Binary, DB> for OsString
+where
+    DB: Backend,
+    Vec<u8>: FromSql<sql_types::Binary, DB>,
+{
+    fn from_sql(bytes: DB::RawValue<'_>) -> deserialize::Result<Self> {
+        <Vec<u8>>::from_sql(bytes).map(OsString::from_vec)
+    }
+}
+
+#[cfg(unix)]
+impl<DB> FromSql<sql_types::Binary, DB> for PathBuf
+where
+    DB: Backend,
+    OsString: FromSql<sql_types::Binary, DB>,
+{
+    fn from_sql(bytes: DB::RawValue<'_>) -> deserialize::Result<Self> {
+        OsString::from_sql(bytes).map(PathBuf::from)
+    }
+}
+
+#[cfg(windows)]
+use std::os::windows::prelude::*;
+
+#[cfg(windows)]
+impl<DB> ToSql<sql_types::Binary, DB> for OsStr
+where
+    for<'a> DB: Backend<BindCollector<'a> = RawBytesBindCollector<DB>>,
+{
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, DB>) -> serialize::Result {
+        let bytes: Vec<u8> = self.encode_wide().flat_map(u16::to_le_bytes).collect();
+        out.write_all(&bytes)
+            .map(|_| IsNull::No)
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
+    }
+}
+
+#[cfg(windows)]
+impl<DB> ToSql<sql_types::Binary, DB> for OsString
+where
+    DB: Backend,
+    OsStr: ToSql<sql_types::Binary, DB>,
+{
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, DB>) -> serialize::Result {
+        self.as_os_str().to_sql(out)
+    }
+}
+
+#[cfg(windows)]
+impl<DB> ToSql<sql_types::Binary, DB> for PathBuf
+where
+    DB: Backend,
+    OsStr: ToSql<sql_types::Binary, DB>,
+{
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, DB>) -> serialize::Result {
+        self.as_os_str().to_sql(out)
+    }
+}
+
+#[cfg(windows)]
+impl<DB> FromSql<sql_types::Binary, DB> for OsString
+where
+    DB: Backend,
+    Vec<u16>: FromSql<sql_types::Binary, DB>,
+{
+    fn from_sql(bytes: DB::RawValue<'_>) -> deserialize::Result<Self> {
+        <Vec<u16>>::from_sql(bytes).map(|b| OsString::from_wide(&b))
+    }
+}
+
+#[cfg(windows)]
+impl<DB> FromSql<sql_types::Binary, DB> for PathBuf
+where
+    DB: Backend,
+    OsString: FromSql<sql_types::Binary, DB>,
+{
+    fn from_sql(bytes: DB::RawValue<'_>) -> deserialize::Result<Self> {
+        OsString::from_sql(bytes).map(PathBuf::from)
     }
 }
